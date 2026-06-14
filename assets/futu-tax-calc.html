@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>富途境外投资个税计算器</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+:root {
+  --primary:#1a56db;--primary-light:#e8edff;--success:#059669;--success-light:#d1fae5;
+  --warning:#d97706;--warning-light:#fef3c7;--danger:#dc2626;--danger-light:#fee2e2;
+  --gray-50:#f9fafb;--gray-100:#f3f4f6;--gray-200:#e5e7eb;--gray-300:#d1d5db;--gray-500:#6b7280;--gray-700:#374151;--gray-900:#111827;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--gray-50);color:var(--gray-900);line-height:1.6;}
+.container{max-width:1100px;margin:0 auto;padding:20px;}
+.header{text-align:center;padding:32px 0 24px;}
+.header h1{font-size:2rem;font-weight:700;}
+.header .sub{color:var(--gray-500);font-size:0.95rem;margin-top:4px;}
+.steps{display:flex;justify-content:center;gap:8px;margin-bottom:24px;}
+.step{display:flex;align-items:center;gap:8px;padding:8px 18px;border-radius:20px;background:#fff;font-size:0.85rem;font-weight:500;color:var(--gray-500);box-shadow:0 1px 2px rgba(0,0,0,0.04);}
+.step .num{width:24px;height:24px;border-radius:50%;background:var(--gray-300);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.8rem;font-weight:700;}
+.step.active{color:var(--primary);border:2px solid var(--primary);}
+.step.active .num{background:var(--primary);}
+.step.done{color:var(--success);}
+.step.done .num{background:var(--success);}
+@media(max-width:768px){.steps{flex-wrap:wrap;}.step{padding:6px 12px;font-size:0.78rem;}}
+.card{background:#fff;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.08);}
+.card-title{font-size:1.1rem;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+.card-title .icon{font-size:1.3rem;}
+.upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+@media(max-width:768px){.upload-grid{grid-template-columns:1fr;}}
+.upload-zone{border:2px dashed var(--gray-300);border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:all 0.2s;position:relative;}
+.upload-zone:hover{border-color:var(--primary);background:var(--primary-light);}
+.upload-zone .zi{font-size:1.8rem;margin-bottom:6px;}
+.upload-zone .zl{font-weight:600;color:var(--gray-700);font-size:0.95rem;}
+.upload-zone .zh{font-size:0.78rem;color:var(--gray-500);margin-top:2px;}
+.upload-zone .zb{display:inline-block;padding:1px 8px;border-radius:3px;font-size:0.7rem;font-weight:600;margin-top:6px;}
+.zb-req{background:var(--danger-light);color:var(--danger);}
+.zb-rec{background:var(--warning-light);color:var(--warning);}
+.zb-opt{background:var(--gray-100);color:var(--gray-500);}
+.upload-zone.loaded{border-color:var(--success);background:var(--success-light);}
+.upload-zone.loaded .zi::after{content:" ✅";}
+.upload-zone input[type=file]{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;}
+.upload-zone .fname{font-size:0.75rem;color:var(--success);margin-top:4px;word-break:break-all;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.flist{margin-top:6px;display:flex;flex-direction:column;gap:4px;position:relative;z-index:1;}
+.fitem{display:flex;align-items:center;gap:6px;font-size:0.75rem;background:var(--gray-50);border-radius:6px;padding:4px 8px;}
+.fitem .fname{color:var(--gray-700);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.fitem .fdel{cursor:pointer;color:var(--danger);font-weight:700;font-size:0.85rem;padding:0 4px;border-radius:4px;transition:background 0.15s;}
+.fitem .fdel:hover{background:var(--danger-light);}
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;}
+@media(max-width:768px){.stat-row{grid-template-columns:1fr 1fr;}}
+.stat{border-radius:12px;padding:20px;text-align:center;}
+.stat .value{font-size:1.8rem;font-weight:700;line-height:1.2;}
+.stat .label{font-size:0.82rem;color:var(--gray-500);margin-top:2px;}
+.stat .sub{font-size:0.75rem;color:var(--gray-500);margin-top:2px;}
+.stat-pri{background:var(--primary-light);}.stat-pri .value{color:var(--primary);}
+.stat-suc{background:var(--success-light);}.stat-suc .value{color:var(--success);}
+.stat-war{background:var(--warning-light);}.stat-war .value{color:var(--warning);}
+.stat-dan{background:var(--danger-light);}.stat-dan .value{color:var(--danger);}
+.tabs{display:flex;gap:2px;background:var(--gray-100);border-radius:10px;padding:4px;margin-bottom:16px;overflow-x:auto;}
+.tab{padding:8px 18px;border-radius:8px;cursor:pointer;font-size:0.88rem;font-weight:500;white-space:nowrap;transition:all 0.15s;color:var(--gray-500);border:none;background:none;}
+.tab:hover{color:var(--gray-700);}
+.tab.active{background:#fff;color:var(--primary);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,0.08);}
+.summary-table{width:100%;border-collapse:collapse;font-size:0.87rem;margin:8px 0;}
+.summary-table th{background:var(--gray-100);padding:10px 12px;text-align:left;font-weight:600;border-bottom:2px solid var(--gray-200);font-size:0.82rem;}
+.summary-table td{padding:9px 12px;border-bottom:1px solid var(--gray-200);}
+.summary-table .erow{cursor:pointer;transition:background 0.15s;}
+.summary-table .erow:hover{background:var(--primary-light);}
+.summary-table .erow .arr{display:inline-block;width:20px;text-align:center;font-size:0.65rem;transition:transform 0.2s;color:var(--gray-500);margin-right:4px;}
+.summary-table .erow.open .arr{transform:rotate(90deg);}
+.summary-table .erow .lc{font-weight:600;}
+.summary-table .erow .cc{color:var(--gray-500);font-size:0.82rem;}
+.drow{display:none;}
+.drow.open{display:table-row;}
+.drow td{padding:0!important;border:none;}
+.dinner{padding:8px 20px 14px 32px;overflow-x:auto;}
+.dinner table{width:100%;font-size:0.8rem;border-collapse:collapse;margin:0;}
+.dinner th{background:var(--gray-50);padding:6px 8px;text-align:left;font-weight:600;border-bottom:1px solid var(--gray-200);font-size:0.73rem;white-space:nowrap;}
+.dinner td{padding:5px 8px;border-bottom:1px solid var(--gray-100);white-space:nowrap;}
+.dinner tr:hover td{background:#fafbff;}
+.dinner .chk-col{text-align:center;width:40px;}
+.dinner .chk-col input{width:16px;height:16px;accent-color:var(--success);cursor:pointer;}
+.dinner .dft td{font-weight:700;background:var(--gray-50);border-top:2px solid var(--gray-200);}
+.dinner .dn{font-size:0.73rem;color:var(--gray-500);margin-top:6px;padding-left:4px;}
+.num{text-align:right;font-variant-numeric:tabular-nums;}
+.pos{color:var(--success);font-weight:600;}
+.neg{color:var(--danger);font-weight:600;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;}
+.badge-us{background:#dbeafe;color:#1e40af;}
+.badge-hk{background:#fce7f3;color:#9d174d;}
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:0.7rem;font-weight:600;}
+.tag-sell{background:#fee2e2;color:#991b1b;}
+.tag-div{background:#dbeafe;color:#1e40af;}
+.tag-fund{background:#fef3c7;color:#92400e;}
+.tag-buy{background:#d1fae5;color:#065f46;}
+.tag-int{background:#ede9fe;color:#5b21b6;}
+.tag-note{background:#fce7f3;color:#9d174d;}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 24px;border:none;border-radius:8px;font-size:0.95rem;font-weight:600;cursor:pointer;transition:all 0.15s;}
+.btn-pri{background:var(--primary);color:#fff;}
+.btn-pri:hover{background:#1444ab;}
+.btn-pri:disabled{background:var(--gray-300);cursor:not-allowed;}
+.btn-out{background:#fff;color:var(--primary);border:2px solid var(--primary);}
+.btn-out:hover{background:var(--primary-light);}
+.alert{padding:12px 16px;border-radius:8px;font-size:0.86rem;margin:8px 0;}
+.alert-info{background:#dbeafe;color:#1e40af;border-left:4px solid #3b82f6;}
+.alert-warn{background:var(--warning-light);color:#92400e;border-left:4px solid var(--warning);}
+.alert-tip{background:var(--gray-100);color:var(--gray-700);border-left:4px solid var(--gray-500);font-size:0.82rem;padding:8px 12px;margin-top:8px;}
+.sl{font-size:0.82rem;color:var(--gray-500);text-transform:uppercase;margin:24px 0 8px;}
+.dmb{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;text-align:center;padding:8px;font-size:0.85rem;font-weight:600;border-radius:8px;margin-bottom:20px;}
+.fn{margin-top:16px;padding:10px 14px;background:var(--gray-50);border-radius:8px;font-size:0.8rem;color:var(--gray-500);line-height:1.7;}
+.fn strong{color:var(--gray-700);}
+/* Year tabs */
+.year-bar .year-tab{padding:10px 24px;border-radius:10px;cursor:pointer;font-size:0.92rem;font-weight:600;transition:all 0.18s;
+  color:var(--gray-500);background:#fff;border:2px solid var(--gray-200);}
+.year-bar .year-tab:hover{border-color:var(--primary);color:var(--primary);}
+.year-bar .year-tab.active{background:var(--primary);color:#fff;border-color:var(--primary);box-shadow:0 2px 8px rgba(26,86,219,0.25);}
+@media(max-width:768px){.year-bar .year-tab{padding:8px 14px;font-size:0.8rem;}}
+/* Rate highlight */
+.rate-hl{background:var(--warning-light)!important;font-weight:600;}
+/* Guide card */
+.guide-card{background:linear-gradient(135deg,#eff6ff,#f0f9ff);border:1px solid #bfdbfe;transition:all 0.2s;}
+.guide-card[open]{border-color:#93c5fd;box-shadow:0 4px 12px rgba(59,130,246,0.08);}
+.guide-summary{cursor:pointer;font-weight:700;font-size:0.95rem;color:var(--primary);padding:4px 0;user-select:none;list-style:none;}
+.guide-summary::-webkit-details-marker{display:none;}
+.guide-summary::before{content:'📖 ';}
+.guide-card[open] .guide-summary::before{content:'📘 ';}
+.guide-content{margin-top:12px;padding-top:12px;border-top:1px solid #bfdbfe;}
+.guide-step{margin-bottom:10px;padding-left:8px;border-left:3px solid var(--primary);font-size:0.84rem;line-height:1.7;color:var(--gray-700);}
+.guide-step strong{color:var(--primary);}
+.guide-step em{color:var(--gray-500);font-size:0.78rem;}
+#result-area{display:none;}
+#empty-state{text-align:center;padding:40px;color:var(--gray-500);}
+#empty-state .big-icon{font-size:3rem;margin-bottom:12px;}
+.progress{width:100%;height:6px;background:var(--gray-200);border-radius:3px;overflow:hidden;margin:12px 0;}
+.progress-bar{height:100%;background:var(--primary);border-radius:3px;transition:width 0.3s;width:0;}
+#log-area{font-size:0.78rem;color:var(--gray-500);max-height:140px;overflow-y:auto;background:var(--gray-50);border-radius:8px;padding:10px;margin-top:8px;display:none;}
+#log-area .log-line{margin:2px 0;}
+#log-area .log-err{color:var(--danger);}
+#log-area .log-ok{color:var(--success);}
+
+.cost-edit{width:68px;text-align:right;border:1px dashed transparent;background:transparent;font-family:inherit;font-size:0.78rem;color:inherit;padding:2px 5px;border-radius:4px;transition:all 0.15s;}
+.cost-edit:hover{border-color:var(--gray-300);background:var(--gray-50);cursor:text;}
+.cost-edit:focus{border-color:var(--primary);background:#fff;outline:none;box-shadow:0 0 0 2px rgba(37,99,235,0.12);color:var(--primary);}
+.cost-edit.overridden{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,0.2);}
+.cost-cell{position:relative;}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- Header -->
+<div class="header">
+  <h1>📊 富途境外投资个税计算器</h1>
+  <p class="sub">上传账单 → 自动算税 → 逐笔核对 → 导出底稿</p>
+</div>
+
+<!-- Steps -->
+<div class="steps" id="steps-bar">
+  <div class="step active" id="step-1"><span class="num">1</span> 上传文件</div>
+  <div class="step" id="step-2"><span class="num">2</span> 自动计算</div>
+  <div class="step" id="step-3"><span class="num">3</span> 逐笔核对</div>
+  <div class="step" id="step-4"><span class="num">4</span> 导出底稿</div>
+</div>
+
+<!-- New user guide (collapsible) -->
+<details class="card guide-card" id="guide-card">
+  <summary class="guide-summary">📖 第一次报税？点这里看操作指引（可折叠）</summary>
+  <div class="guide-content">
+    <div class="guide-step"><strong>第1步 下载材料</strong><br>打开富途牛牛APP → 「账户」→「我的税表」→ 选择年份 → 导出Excel。需要多个年份就逐个导出。<br><em>盈亏记录和CRS资料需联系富途客服索取。</em></div>
+    <div class="guide-step"><strong>第2步 上传解析</strong><br>将下载的Excel文件拖入下方对应区域（支持多文件跨年度材料导入）。</div>
+    <div class="guide-step"><strong>第3步 逐笔核对</strong><br>点击「美国来源」或「中国香港来源」→ 点击税目行展开明细 → 逐项勾选确认。</div>
+    <div class="guide-step"><strong>第4步 导出申报</strong><br>核对无误后，点击「下载年度报税底稿」，持底稿登录 自然人电子税务局 (etax.chinatax.gov.cn) 填写申报。<br><em>注意：建议在网页端操作，尤其数据量大的在个税APP操作不太便捷。</em></div>
+    <div style="margin-top:12px;font-size:0.78rem;color:var(--gray-500);">💡 支持多年数据一次性导入，系统自动按年度拆分计算。有疑问优先查看各区域的灰色提示文字。</div>
+  </div>
+</details>
+
+<!-- ====== 文件上传 ====== -->
+<div class="card" id="upload-card">
+  <div class="card-title"><span class="icon">📁</span> 上传富途导出文件（拖拽或点击选择）</div>
+  <div style="font-size:0.78rem;color:var(--primary);margin-bottom:12px;padding:6px 12px;background:rgba(37,99,235,0.06);border-radius:6px;text-align:center;">💡 每个区域支持拖入<strong>多个</strong>文件 —— 多年度材料直接一起导入，无需合并成一份 Excel</div>
+  <div class="upload-grid">
+    <div class="upload-zone" id="zone-bill">
+      <div class="zi">📋</div><div class="zl">年度账单</div><div class="zh">交易流水 + 资金进出 (APP→账户→我的税表)</div>
+      <div class="zb zb-req">必填 · 可多选，支持多年度</div>
+      <div class="flist" id="flist-bill"></div>
+      <input type="file" accept=".xlsx,.xls" data-zone="bill" multiple>
+    </div>
+    <div class="upload-zone" id="zone-div">
+      <div class="zi">💵</div><div class="zl">股息利息汇总</div><div class="zh">交叉验证分红数据 (APP→更多→报表)</div>
+      <div class="zb zb-rec">建议 · 可多选，支持多年度</div>
+      <div class="flist" id="flist-div"></div>
+      <input type="file" accept=".xlsx,.xls" data-zone="div" multiple>
+    </div>
+    <div class="upload-zone" id="zone-pnl">
+      <div class="zi">📈</div><div class="zl">年度盈亏记录</div><div class="zh">提供 FIFO 成本基准，提升精度</div>
+      <div class="zb zb-rec">建议 · 可多选，支持多年度</div>
+      <div class="alert-tip" style="margin:6px 12px 0;font-size:0.7rem;padding:4px 6px;">⚠️ 需联系富途客服索取，APP不支持直接导出</div>
+      <div class="flist" id="flist-pnl"></div>
+      <input type="file" accept=".xlsx,.xls" data-zone="pnl" multiple>
+    </div>
+    <div class="upload-zone" id="zone-crs">
+      <div class="zi">🏦</div><div class="zl">CRS 账户资料</div><div class="zh">辅助确认境外账户申报范围</div>
+      <div class="zb zb-opt">选填 · 可多选，支持多年度</div>
+      <div class="alert-tip" style="margin:6px 12px 0;font-size:0.7rem;padding:4px 6px;">⚠️ 需联系富途客服索取，APP不支持直接导出</div>
+      <div class="flist" id="flist-crs"></div>
+      <input type="file" accept=".xlsx,.xls" data-zone="crs" multiple>
+    </div>
+  </div>
+  <div id="progress-area" style="display:none;">
+    <div class="progress"><div class="progress-bar" id="prog-bar"></div></div>
+    <div id="log-area"></div>
+  </div>
+  <div style="margin-top:16px;text-align:center;">
+    <button class="btn btn-pri" id="btnCalc" disabled>🔍 解析并计算税额</button>
+    <button class="btn btn-out" id="btnReset" style="margin-left:8px;">🔄 重置</button>
+  </div>
+</div>
+
+<!-- ====== 结果区域 ====== -->
+<div id="result-area">
+  <div class="sl">▼ 计算结果</div>
+  <div id="cost-warning" class="alert alert-warn" style="display:none;">
+    ⚠️ <strong>成本估算提示</strong>（数据不完整）<br>
+    以下股票的部分卖出未能匹配到完整买入记录，系统已按可用数据推算成本（保守估计：未匹配部分成本按0计算，可能导致税额偏高）。<br>
+    涉及股票：<strong><span id="cost-warn-symbols"></span></strong><br>
+    <em>请核对券商对账单或盈亏记录，确认成本后手动修正再申报。</em>
+  </div>
+  <!-- 年度选择器（动态生成） -->
+  <div class="year-bar" id="year-bar" style="display:none;justify-content:center;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+    <span style="font-size:0.82rem;color:var(--gray-500);font-weight:600;">📅</span>
+  </div>
+  <div class="stat-row" id="stat-row"></div>
+
+  <div class="card">
+    <div class="card-title"><span class="icon">📋</span> 分国分项明细 &amp; 逐笔核对</div>
+    <div class="alert alert-tip">💡 点击税目行展开逐笔明细，勾选核对。核对状态自动标记。</div>
+    <div class="tabs" id="main-tabs">
+      <button class="tab active" data-tab="tab-us">🇺🇸 美国来源</button>
+      <button class="tab" data-tab="tab-hk">🇭🇰 中国香港来源</button>
+      <button class="tab" data-tab="tab-rate">💱 汇率参考</button>
+    </div>
+    <div id="tab-us" class="tab-content"></div>
+    <div id="tab-hk" class="tab-content" style="display:none;"></div>
+    <div id="tab-rate" class="tab-content" style="display:none;"></div>
+  </div>
+
+  <!-- 操作按钮 -->
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+    <button class="btn btn-pri" id="btnExport">📥 下载年度报税底稿 (.md)</button>
+    <button class="btn btn-out" id="btnReset2">🔄 重置重新上传</button>
+  </div>
+</div>
+
+<!-- Empty state -->
+<div id="empty-state">
+  <div class="big-icon">📤</div>
+  <p>请上传富途导出的 Excel 文件开始计算</p>
+</div>
+
+</div>
+
+<script src="futu-tax-calc.js"></script>
+
+<div style="text-align:center;padding:18px 12px 12px;font-size:0.72rem;color:var(--gray-400);line-height:1.8;">
+  © 2025 富途个税计算器（开源版）
+  <br>牛刀侠 · 287315829@qq.com
+</div>
+
+</body>
+</html>
