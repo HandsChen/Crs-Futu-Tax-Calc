@@ -18,8 +18,15 @@ const S = {
 };
 
 // ============================================================
-// 1. EXCHANGE RATES (央行月末中间价, 2022-2025)
+// 1. MARKET CONFIG + EXCHANGE RATES (央行月末中间价, 2022-2025)
 // ============================================================
+const MARKETS = {
+  us: { key: 'us', label: '美国', flag: '🇺🇸', badge: 'badge-us', currency: 'USD' },
+  hk: { key: 'hk', label: '中国香港', flag: '🇭🇰', badge: 'badge-hk', currency: 'HKD' },
+  jp: { key: 'jp', label: '日本', flag: '🇯🇵', badge: 'badge-jp', currency: 'JPY' },
+};
+const MARKET_ORDER = ['us', 'hk', 'jp'];
+
 const RATES = {
   USD: {
     2022: {1:6.3646,2:6.3222,3:6.3507,4:6.4280,5:6.6607,6:6.6957,7:6.7371,8:6.8451,9:7.0488,10:7.1638,11:7.1211,12:6.9735},
@@ -32,6 +39,12 @@ const RATES = {
     2023: {1:0.86957,2:0.88963,3:0.88266,4:0.88652,5:0.90226,6:0.91568,7:0.91209,8:0.91634,9:0.91715,10:0.91710,11:0.91296,12:0.90667},
     2024: {1:0.90709,2:0.90877,3:0.90723,4:0.90789,5:0.90933,6:0.90963,7:0.91400,8:0.91157,9:0.91298,10:0.91227,11:0.90760,12:0.90322},
     2025: {1:0.92298,2:0.91970,3:0.92030,4:0.92300,5:0.92170,6:0.91700,7:0.91400,8:0.91157,9:0.91298,10:0.91227,11:0.90760,12:0.90322}
+  },
+  JPY: {
+    2022: {1:0.05530,2:0.05490,3:0.05200,4:0.04920,5:0.05200,6:0.04940,7:0.05050,8:0.04950,9:0.04870,10:0.04820,11:0.05130,12:0.05240},
+    2023: {1:0.05210,2:0.05090,3:0.05180,4:0.05160,5:0.05040,6:0.04950,7:0.05110,8:0.04910,9:0.04800,10:0.04780,11:0.04820,12:0.05020},
+    2024: {1:0.04820,2:0.04730,3:0.04690,4:0.04560,5:0.04550,6:0.04420,7:0.04720,8:0.04900,9:0.04940,10:0.04660,11:0.04680,12:0.04470},
+    2025: {1:0.04620,2:0.04790,3:0.04830,4:0.04980,5:0.04980,6:0.04970,7:0.04860,8:0.04820,9:0.04840,10:0.04750,11:0.04730,12:0.04700}
   }
 };
 
@@ -40,10 +53,40 @@ function getRate(ccy, dateStr) {
   const yr = d.getFullYear();
   const mo = d.getMonth() + 1;
   const table = RATES[ccy];
-  if (!table) return ccy === 'USD' ? 7.1 : 0.91;
+  if (!table) throw new Error(`缺少 ${ccy}/CNY 汇率表`);
   const yrData = table[yr];
-  if (!yrData) { const yrs = Object.keys(table).sort(); return table[yrs[yrs.length-1]][mo] || (ccy==='USD'?7.1:0.91); }
-  return yrData[mo] || (ccy === 'USD' ? 7.1 : 0.91);
+  if (!yrData) { const yrs = Object.keys(table).sort(); return table[yrs[yrs.length-1]][mo]; }
+  if (!yrData[mo]) throw new Error(`缺少 ${yr}年${mo}月 ${ccy}/CNY 汇率`);
+  return yrData[mo];
+}
+
+function marketKeyFromMarket(market, currency) {
+  const mkt = String(market || '').toUpperCase();
+  const ccy = String(currency || '').toUpperCase();
+  if (mkt === 'US' || mkt.includes('US') || mkt.includes('NASDAQ') || mkt.includes('NYSE') || ccy === 'USD') return 'us';
+  if (mkt === 'HK' || mkt.includes('HK') || mkt.includes('HKG') || mkt.includes('香港') || ccy === 'HKD') return 'hk';
+  if (mkt === 'JP' || mkt.includes('JP') || mkt.includes('TSE') || mkt.includes('TYO') || mkt.includes('日本') || ccy === 'JPY') return 'jp';
+  return null;
+}
+
+function marketKeyFromCurrency(currency) {
+  const ccy = String(currency || '').toUpperCase();
+  if (ccy === 'USD') return 'us';
+  if (ccy === 'HKD') return 'hk';
+  if (ccy === 'JPY') return 'jp';
+  return null;
+}
+
+function blankMarketTax() {
+  return {
+    div: { gross: 0, tax: 0, detail: [], taxDue: 0, netTax: 0 },
+    int: { gross: 0, detail: [], taxDue: 0 },
+    cap: { net: 0, detail: [], taxDue: 0, taxable: 0 },
+    fundCap: { net: 0, detail: [], taxDue: 0, taxable: 0 },
+    fundDiv: { gross: 0, detail: [], taxDue: 0 },
+    note: { gross: 0, detail: [], taxDue: 0 },
+    totalTaxable: 0, credit: 0, totalCredit: 0, taxDue: 0,
+  };
 }
 
 function parseDate(str) {
@@ -336,10 +379,9 @@ function buildDividendItems(dividendFlows) {
       const dayDiff = Math.abs((inDate - outDate) / (1000*60*60*24));
       if (dayDiff <= 3) {
         const ratio = Math.abs(o.amount) / gross;
-        if (ratio < 0.5) {
-          taxAmt = Math.abs(o.amount);
+        if (ratio < 0.5 && taxAmt + Math.abs(o.amount) < gross * 0.5) {
+          taxAmt += Math.abs(o.amount);
           usedOuts.add(i);
-          break;
         }
       }
     }
@@ -525,7 +567,9 @@ S.costOverrides = S.costOverrides || {};
 function classifyCapitalGains(trades, costBasis) {
   const usTrades = [];
   const hkTrades = [];
+  const jpTrades = [];
   const fundTrades = [];
+  const unsupported = [];
 
   for (const t of trades) {
     const isSell = t.direction.includes('卖出') || t.direction.includes('SELL');
@@ -538,8 +582,14 @@ function classifyCapitalGains(trades, costBasis) {
     if (cat === '基金' || cat.includes('基金') || cat === 'FUND') {
       const costs = costBasis[symKey] || [];
       const match = costs.find(c => c.sellDate === t.time);
+      const marketKey = marketKeyFromMarket(t.market, t.currency);
+      if (!marketKey) {
+        unsupported.push({ ...t, reason: '未知基金市场/币种' });
+        continue;
+      }
       fundTrades.push({
         symbol: t.symbol, date: t.time, currency: t.currency,
+        market: marketKey,
         qty: Math.abs(t.qty), sellAmt: Math.abs(t.amount),
         cost: match ? match.totalCost : 0,
         gain: match ? match.gain : 0,
@@ -556,14 +606,21 @@ function classifyCapitalGains(trades, costBasis) {
       gain: match ? match.gain : (Math.abs(t.amount) - (match ? match.totalCost : 0)),
     };
 
-    if (mkt === 'US' || mkt.includes('US')) {
+    const marketKey = marketKeyFromMarket(t.market, t.currency);
+    entry.market = marketKey;
+
+    if (marketKey === 'us') {
       usTrades.push(entry);
-    } else {
+    } else if (marketKey === 'hk') {
       hkTrades.push(entry);
+    } else if (marketKey === 'jp') {
+      jpTrades.push(entry);
+    } else {
+      unsupported.push({ ...t, reason: '未知股票市场/币种' });
     }
   }
 
-  return { usTrades, hkTrades, fundTrades };
+  return { usTrades, hkTrades, jpTrades, fundTrades, unsupported };
 }
 
 // ============================================================
@@ -571,125 +628,97 @@ function classifyCapitalGains(trades, costBasis) {
 // ============================================================
 function calculateTax(data) {
   const { dividends, interest, fundDiv, noteIncome } = data;
-  const { usTrades, hkTrades, fundTrades: capFundTrades } = data.capGains;
-
-  // ---- US ----
-  const usDiv = dividends.filter(d => d.currency === 'USD');
-  const usInt = interest.filter(d => d.currency === 'USD');
-
-  let usDivGross = 0, usDivTax = 0;
-  const usDivDetail = usDiv.map(d => {
-    const rate = d.grossAmount > 0 ? getRate('USD', d.date) : getRate('USD', null);
-    const grossCNY = d.grossAmount * rate;
-    const taxCNY = d.taxAmount * rate;
-    usDivGross += grossCNY; usDivTax += taxCNY;
-    return { ...d, rate, grossCNY, taxCNY };
-  });
-
-  let usIntGross = 0;
-  const usIntDetail = usInt.map(d => {
-    const rate = getRate('USD', d.date);
-    const cny = Math.abs(d.amount) * rate;
-    usIntGross += cny;
-    return { ...d, rate, cny };
-  });
-
-  let usCapNet = 0;
-  const usCapDetail = usTrades.map(t => {
-    const rate = getRate('USD', t.date);
-    const gainCNY = t.gain * rate;
-    usCapNet += gainCNY;
-    return { ...t, rate, gainCNY };
-  });
-
-  const usTaxable = usDivGross + usIntGross + Math.max(0, usCapNet);
-  const usCredit = usDivTax;
-  const usTaxBefore = (usDivGross + usIntGross + Math.max(0, usCapNet)) * 0.2;
-  const usTax = Math.max(0, usTaxBefore - usCredit);
-
-  // ---- HK ----
-  const hkDiv = dividends.filter(d => d.currency === 'HKD');
-  const hkInt = interest.filter(d => d.currency === 'HKD');
-
-  let hkDivGross = 0, hkDivTax = 0;
-  const hkDivDetail = hkDiv.map(d => {
-    const rate = d.grossAmount > 0 ? getRate('HKD', d.date) : getRate('HKD', null);
-    const grossCNY = d.grossAmount * rate;
-    const taxCNY = d.taxAmount * rate;
-    hkDivGross += grossCNY; hkDivTax += taxCNY;
-    return { ...d, rate, grossCNY, taxCNY };
-  });
-
-  let hkIntGross = 0;
-  const hkIntDetail = hkInt.map(d => {
-    const rate = getRate('HKD', d.date);
-    const cny = Math.abs(d.amount) * rate;
-    hkIntGross += cny;
-    return { ...d, rate, cny };
-  });
-
-  let hkCapNet = 0;
-  const hkCapDetail = hkTrades.map(t => {
-    const rate = getRate('HKD', t.date);
-    const gainCNY = t.gain * rate;
-    hkCapNet += gainCNY;
-    return { ...t, rate, gainCNY };
-  });
-
-  // Fund capital gains
-  let fundCapNet = 0;
-  const fundCapDetail = capFundTrades.map(t => {
-    const ccy = t.currency;
-    const rate = ccy === 'USD' ? getRate('USD', t.date) : getRate('HKD', t.date);
-    const gainCNY = t.gain * rate;
-    fundCapNet += gainCNY;
-    return { ...t, rate, gainCNY };
-  });
-
-  // Fund dividends
-  let fundDivNet = 0;
-  const fundDivDetail = fundDiv.map(d => {
-    const rate = d.currency === 'USD' ? getRate('USD', d.date) : getRate('HKD', d.date);
-    const cny = d.amount * rate;
-    fundDivNet += cny;
-    return { ...d, rate, cny };
-  });
-
-  // Note income
-  let noteNet = 0;
-  const noteDetail = noteIncome.map(d => {
-    const rate = d.currency === 'USD' ? getRate('USD', d.date) : getRate('HKD', d.date);
-    const cny = Math.abs(d.amount) * rate;
-    noteNet += cny;
-    return { ...d, rate, cny };
-  });
-
-  const hkAllCapNet = hkCapNet + fundCapNet;
-  const hkTaxable = hkDivGross + hkIntGross + Math.max(0, hkAllCapNet) + fundDivNet + noteNet;
-  const hkCredit = hkDivTax;
-  const hkTaxBefore = (hkDivGross + hkIntGross + Math.max(0, hkAllCapNet) + fundDivNet + noteNet) * 0.2;
-  const hkTax = Math.max(0, hkTaxBefore - hkCredit);
-
-  return {
-    us: {
-      div: { gross: usDivGross, tax: usDivTax, detail: usDivDetail, taxDue: usDivGross * 0.2, netTax: Math.max(0, usDivGross * 0.2 - usDivTax) },
-      int: { gross: usIntGross, detail: usIntDetail, taxDue: usIntGross * 0.2 },
-      cap: { net: usCapNet, detail: usCapDetail, taxDue: Math.max(0, usCapNet * 0.2) },
-      totalTaxable: usTaxable, credit: usCredit, taxDue: usTax,
-    },
-    hk: {
-      div: { gross: hkDivGross, tax: hkDivTax, detail: hkDivDetail, taxDue: hkDivGross * 0.2, netTax: Math.max(0, hkDivGross * 0.2 - hkDivTax) },
-      int: { gross: hkIntGross, detail: hkIntDetail, taxDue: hkIntGross * 0.2 },
-      cap: { net: hkCapNet, detail: hkCapDetail, taxDue: Math.max(0, hkCapNet * 0.2) },
-      fundCap: { net: fundCapNet, detail: fundCapDetail, taxDue: Math.max(0, fundCapNet * 0.2) },
-      fundDiv: { gross: fundDivNet, detail: fundDivDetail, taxDue: fundDivNet * 0.2 },
-      note: { gross: noteNet, detail: noteDetail, taxDue: noteNet * 0.2 },
-      totalTaxable: hkTaxable, credit: hkCredit, taxDue: hkTax,
-    },
-    totalTaxable: usTaxable + hkTaxable,
-    totalCredit: usCredit + hkCredit,
-    totalTax: usTax + hkTax,
+  const capGains = data.capGains || {};
+  const result = {
+    us: blankMarketTax(),
+    hk: blankMarketTax(),
+    jp: blankMarketTax(),
+    unsupported: capGains.unsupported || [],
+    totalTaxable: 0,
+    totalCredit: 0,
+    totalTax: 0,
   };
+
+  const capByMarket = {
+    us: capGains.usTrades || [],
+    hk: capGains.hkTrades || [],
+    jp: capGains.jpTrades || [],
+  };
+
+  for (const key of MARKET_ORDER) {
+    const cfg = MARKETS[key];
+    const ccy = cfg.currency;
+    const m = result[key];
+
+    const divRows = dividends.filter(d => marketKeyFromCurrency(d.currency) === key);
+    m.div.detail = divRows.map(d => {
+      const rate = getRate(ccy, d.date);
+      const grossCNY = d.grossAmount * rate;
+      const taxCNY = d.taxAmount * rate;
+      m.div.gross += grossCNY;
+      m.div.tax += taxCNY;
+      return { ...d, rate, grossCNY, taxCNY };
+    });
+    m.div.taxDue = m.div.gross * 0.2;
+    m.div.netTax = Math.max(0, m.div.taxDue - m.div.tax);
+
+    const intRows = interest.filter(d => marketKeyFromCurrency(d.currency) === key);
+    m.int.detail = intRows.map(d => {
+      const rate = getRate(ccy, d.date);
+      const cny = Math.abs(d.amount) * rate;
+      m.int.gross += cny;
+      return { ...d, rate, cny };
+    });
+    m.int.taxDue = m.int.gross * 0.2;
+
+    m.cap.detail = capByMarket[key].map(t => {
+      const rate = getRate(t.currency || ccy, t.date);
+      const gainCNY = t.gain * rate;
+      m.cap.net += gainCNY;
+      return { ...t, rate, gainCNY };
+    });
+    m.cap.taxable = Math.max(0, m.cap.net);
+    m.cap.taxDue = m.cap.taxable * 0.2;
+
+    const marketFundTrades = (capGains.fundTrades || []).filter(t => (t.market || marketKeyFromCurrency(t.currency)) === key);
+    m.fundCap.detail = marketFundTrades.map(t => {
+      const rate = getRate(t.currency || ccy, t.date);
+      const gainCNY = t.gain * rate;
+      m.fundCap.net += gainCNY;
+      return { ...t, rate, gainCNY };
+    });
+    m.fundCap.taxable = Math.max(0, m.fundCap.net);
+    m.fundCap.taxDue = m.fundCap.taxable * 0.2;
+
+    const marketFundDiv = fundDiv.filter(d => marketKeyFromCurrency(d.currency) === key);
+    m.fundDiv.detail = marketFundDiv.map(d => {
+      const rate = getRate(d.currency || ccy, d.date);
+      const cny = d.amount * rate;
+      m.fundDiv.gross += cny;
+      return { ...d, rate, cny };
+    });
+    m.fundDiv.taxDue = m.fundDiv.gross * 0.2;
+
+    const marketNotes = noteIncome.filter(d => marketKeyFromCurrency(d.currency) === key);
+    m.note.detail = marketNotes.map(d => {
+      const rate = getRate(d.currency || ccy, d.date);
+      const cny = Math.abs(d.amount) * rate;
+      m.note.gross += cny;
+      return { ...d, rate, cny };
+    });
+    m.note.taxDue = m.note.gross * 0.2;
+
+    m.totalTaxable = m.div.gross + m.int.gross + Math.max(0, m.cap.net + m.fundCap.net) + m.fundDiv.gross + m.note.gross;
+    m.credit = m.div.tax;
+    m.totalCredit = m.credit;
+    m.taxDue = Math.max(0, m.totalTaxable * 0.2 - m.credit);
+
+    result.totalTaxable += m.totalTaxable;
+    result.totalCredit += m.credit;
+    result.totalTax += m.taxDue;
+  }
+
+  return result;
 }
 
 // ============================================================
@@ -860,9 +889,11 @@ async function processAll() {
 
       const usCap = yearTax.us.cap.detail.length;
       const hkCap = yearTax.hk.cap.detail.length;
+      const jpCap = yearTax.jp.cap.detail.length;
       const usDiv = yearTax.us.div.detail.length;
       const hkDiv = yearTax.hk.div.detail.length;
-      const active = usCap + hkCap + usDiv + hkDiv;
+      const jpDiv = yearTax.jp.div.detail.length;
+      const active = usCap + hkCap + jpCap + usDiv + hkDiv + jpDiv;
       log(`    ${yearStr}：应税 ¥${yearTax.totalTaxable.toFixed(0)} · 应缴 ¥${yearTax.totalTax.toFixed(0)} · 交易 ${yearTrades.filter(t=>t.direction.includes('卖')||t.direction.includes('SELL')).length}笔`);
     }
     setProgress(90);
@@ -937,11 +968,14 @@ function renderResults() {
 
   // Show cost warning if any costs were estimated
   const costWarn = document.getElementById('cost-warning');
-  const costWarnSymbols = document.getElementById('cost-warn-symbols');
-  if (S.estimatedCosts && S.estimatedCosts.length > 0) {
-    const symbols = [...new Set(S.estimatedCosts.map(e => e.symbol))].join(', ');
-    costWarnSymbols.textContent = symbols;
+  if (T.unsupported && T.unsupported.length > 0) {
+    const symbols = [...new Set(T.unsupported.map(e => e.symbol || e.currency || e.market || 'UNKNOWN'))].join(', ');
     costWarn.style.display = 'block';
+    costWarn.innerHTML = `⚠️ <strong>不支持的市场</strong><br>以下卖出记录无法识别来源国/地区，已从税额计算中排除，避免误归类到香港。<br>涉及标的：<strong>${symbols}</strong><br><em>请先补充市场映射或手动核对后再申报。</em>`;
+  } else if (S.estimatedCosts && S.estimatedCosts.length > 0) {
+    const symbols = [...new Set(S.estimatedCosts.map(e => e.symbol))].join(', ');
+    costWarn.style.display = 'block';
+    costWarn.innerHTML = `⚠️ <strong>成本估算提示</strong>（数据不完整）<br>以下股票的部分卖出未能匹配到完整买入记录，系统已按可用数据推算成本（保守估计：未匹配部分成本按0计算，可能导致税额偏高）。<br>涉及股票：<strong>${symbols}</strong><br><em>请核对券商对账单或盈亏记录，确认成本后手动修正再申报。</em>`;
   } else {
     costWarn.style.display = 'none';
   }
@@ -951,13 +985,15 @@ function renderResults() {
   // Stat cards
   const statRow = document.getElementById('stat-row');
   const checkCount = Object.keys(S.checkState).filter(k => k.startsWith(S.activeYear + '-')).length;
-  const detailCount = (T.us.div.detail||[]).length + (T.us.int.detail||[]).length + (T.us.cap.detail||[]).length
-    + (T.hk.div.detail||[]).length + (T.hk.int.detail||[]).length + (T.hk.cap.detail||[]).length
-    + (T.hk.fundCap.detail||[]).length + (T.hk.fundDiv.detail||[]).length + (T.hk.note.detail||[]).length;
+  const detailCount = MARKET_ORDER.reduce((sum, key) => {
+    const m = T[key];
+    return sum + (m.div.detail||[]).length + (m.int.detail||[]).length + (m.cap.detail||[]).length
+      + (m.fundCap.detail||[]).length + (m.fundDiv.detail||[]).length + (m.note.detail||[]).length;
+  }, 0);
 
   statRow.innerHTML = `
     <div class="stat stat-pri"><div class="value">¥${T.totalTax.toFixed(0)}</div><div class="label">应缴税额</div><div class="sub">${yearLabel}</div></div>
-    <div class="stat stat-war"><div class="value">¥${T.totalTaxable.toFixed(0)}</div><div class="label">应税所得</div><div class="sub">美国 + 香港</div></div>
+    <div class="stat stat-war"><div class="value">¥${T.totalTaxable.toFixed(0)}</div><div class="label">应税所得</div><div class="sub">美国 + 香港 + 日本</div></div>
     <div class="stat stat-suc"><div class="value">¥${T.totalCredit.toFixed(0)}</div><div class="label">已缴税抵扣</div><div class="sub">源泉税</div></div>
     <div class="stat"><div class="value" style="color:var(--gray-500);">${checkCount}/${detailCount}</div><div class="label">核对进度</div><div class="sub">点击税目展开核对</div></div>
   `;
@@ -971,6 +1007,7 @@ function renderResults() {
   // Render tab contents
   renderUSTab(T);
   renderHKTab(T);
+  renderJPTab(T);
   renderRateTab();
 }
 
@@ -1301,6 +1338,133 @@ function renderHKTab(T) {
   `;
 }
 
+// ─── JP Tab ───
+function renderJPTab(T) {
+  const jp = T.jp;
+  const rows = [];
+  const prefix = S.activeYear + '-';
+
+  if (jp.cap.detail.length > 0) {
+    const detailId = prefix + 'jp-cap';
+    S.checkState[detailId] = { total: jp.cap.detail.length, checked: 0 };
+    const netLabel = jp.cap.net < 0 ? '净亏损' : '净盈利';
+    const netClass = jp.cap.net < 0 ? 'neg' : 'pos';
+    rows.push(`
+      <tr class="erow" onclick="toggleRow(this)" data-target="${detailId}">
+        <td><span class="arr">▶</span></td>
+        <td class="lc"><span class="badge badge-jp">财产转让</span></td>
+        <td class="cc">${jp.cap.detail.length} 笔</td>
+        <td>${netLabel}</td>
+        <td class="num ${netClass}">${jp.cap.net.toFixed(0)}</td><td class="num">0</td>
+        <td class="num ${jp.cap.taxDue > 0 ? 'pos' : ''}">${jp.cap.taxDue.toFixed(0)}</td>
+        <td style="text-align:center;"><span class="badge badge-jp" style="background:#fef3c7;color:#92400e;font-size:0.72rem;" id="chk-${detailId}">0/${jp.cap.detail.length} 已核</span></td>
+      </tr>
+      <tr class="drow" id="${detailId}">
+        <td colspan="8">
+          <div class="dinner">
+            <table>
+              <thead><tr><th>#</th><th>股票</th><th>日期</th><th class="num">数量</th><th class="num">卖价</th><th class="num">FIFO成本</th><th class="num">盈亏</th><th class="num">汇率</th><th class="num">折CNY</th><th class="chk-col">✓</th></tr></thead>
+              <tbody>
+                ${jp.cap.detail.map((d,i) => `
+                  <tr>
+                    <td>${i+1}</td><td>${d.symbol}${d.estimated ? ' ⚠️':''}</td><td>${String(d.date).substring(0,10)}</td>
+                    <td class="num">${d.qty}</td><td class="num">${(d.sellAmt/d.qty||0).toFixed(2)}</td>
+                    <td class="num cost-cell"><input class="cost-edit" type="text" value="${(d.cost/d.qty||0).toFixed(2)}" data-symbol="${d.symbol}" data-date="${String(d.date).substring(0,10)}" data-market="jp" data-orig-value="${(d.cost/d.qty||0).toFixed(2)}" onchange="onCostEdit(this)" /></td>
+                    <td class="num gain-cell ${d.gain>=0?'pos':'neg'}">${d.gain>=0?'+':''}${d.gain.toFixed(0)}</td>
+                    <td class="num">${d.rate.toFixed(5)}</td>
+                    <td class="num gain-cny-cell ${d.gainCNY>=0?'pos':'neg'}">${d.gainCNY>=0?'+':''}${d.gainCNY.toFixed(0)}</td>
+                    <td class="chk-col"><input type="checkbox" onchange="updateCheck(this,'${detailId}')"></td>
+                  </tr>`).join('')}
+              </tbody>
+              <tfoot><tr class="dft"><td colspan="6">合计</td><td class="num ${jp.cap.net>=0?'pos':'neg'}">${jp.cap.net>=0?'+':''}${jp.cap.net.toFixed(0)}</td><td></td><td class="num">${jp.cap.net.toFixed(0)}</td><td></td></tr></tfoot>
+            </table>
+            ${jp.cap.net < -0.01 ? '<div class="dn">💡 日股财产转让净亏损，应税=0。亏损可同国同年同税目内互抵。</div>' : ''}
+          </div>
+        </td>
+      </tr>`);
+  }
+
+  if (jp.div.detail.length > 0) {
+    const detailId = prefix + 'jp-div';
+    S.checkState[detailId] = { total: jp.div.detail.length, checked: 0 };
+    rows.push(`
+      <tr class="erow" onclick="toggleRow(this)" data-target="${detailId}">
+        <td><span class="arr">▶</span></td>
+        <td class="lc"><span class="badge badge-jp">股息红利</span></td>
+        <td class="cc">${jp.div.detail.length} 笔</td>
+        <td>JPY ${jp.div.detail.reduce((s,d)=>s+d.grossAmount,0).toFixed(0)}</td>
+        <td class="num">${jp.div.gross.toFixed(2)}</td>
+        <td class="num">${jp.div.tax.toFixed(2)}</td>
+        <td class="num pos">${jp.div.netTax.toFixed(2)}</td>
+        <td style="text-align:center;"><span class="badge badge-jp" style="background:#fef3c7;color:#92400e;font-size:0.72rem;" id="chk-${detailId}">0/${jp.div.detail.length} 已核</span></td>
+      </tr>
+      <tr class="drow" id="${detailId}">
+        <td colspan="8">
+          <div class="dinner">
+            <table>
+              <thead><tr><th>#</th><th>股票</th><th>日期</th><th class="num">毛额(JPY)</th><th class="num">预扣税</th><th class="num">汇率</th><th class="num">折CNY毛额</th><th class="num">折CNY已缴税</th><th class="chk-col">✓</th></tr></thead>
+              <tbody>
+                ${jp.div.detail.map((d,i) => `
+                  <tr>
+                    <td>${i+1}</td><td>${d.symbol}</td><td>${d.date}</td>
+                    <td class="num">${d.grossAmount.toFixed(0)}</td>
+                    <td class="num">${d.taxAmount.toFixed(0)}</td>
+                    <td class="num">${d.rate.toFixed(5)}</td>
+                    <td class="num">${d.grossCNY.toFixed(2)}</td>
+                    <td class="num">${d.taxCNY.toFixed(2)}</td>
+                    <td class="chk-col"><input type="checkbox" onchange="updateCheck(this,'${detailId}')"></td>
+                  </tr>`).join('')}
+              </tbody>
+              <tfoot><tr class="dft"><td colspan="3">合计</td><td class="num">${jp.div.detail.reduce((s,d)=>s+d.grossAmount,0).toFixed(0)}</td><td class="num">${jp.div.detail.reduce((s,d)=>s+d.taxAmount,0).toFixed(0)}</td><td></td><td class="num">${jp.div.gross.toFixed(2)}</td><td class="num">${jp.div.tax.toFixed(2)}</td><td></td></tr></tfoot>
+            </table>
+            <div class="dn">💡 日股股息预扣税已按日本来源境外已缴税额参与抵免。</div>
+          </div>
+        </td>
+      </tr>`);
+  }
+
+  if (jp.int.detail.length > 0) {
+    const detailId = prefix + 'jp-int';
+    S.checkState[detailId] = { total: jp.int.detail.length, checked: 0 };
+    rows.push(`
+      <tr class="erow" onclick="toggleRow(this)" data-target="${detailId}">
+        <td><span class="arr">▶</span></td>
+        <td class="lc"><span class="badge badge-jp">利息所得</span></td>
+        <td class="cc">${jp.int.detail.length} 笔</td>
+        <td>JPY ${jp.int.detail.reduce((s,d)=>s+Math.abs(d.amount),0).toFixed(0)}</td>
+        <td class="num">${jp.int.gross.toFixed(2)}</td><td class="num">0</td>
+        <td class="num pos">${jp.int.taxDue.toFixed(2)}</td>
+        <td style="text-align:center;"><span class="badge badge-jp" style="background:#fef3c7;color:#92400e;font-size:0.72rem;" id="chk-${detailId}">0/${jp.int.detail.length} 已核</span></td>
+      </tr>
+      <tr class="drow" id="${detailId}">
+        <td colspan="8">
+          <div class="dinner">
+            <table>
+              <thead><tr><th>来源</th><th>日期</th><th class="num">金额</th><th class="num">汇率</th><th class="num">折CNY</th><th class="chk-col">✓</th></tr></thead>
+              <tbody>${jp.int.detail.map(d => `<tr><td>账户余额利息</td><td>${d.date}</td><td class="num">${Math.abs(d.amount).toFixed(0)}</td><td class="num">${d.rate.toFixed(5)}</td><td class="num">${d.cny.toFixed(2)}</td><td class="chk-col"><input type="checkbox" onchange="updateCheck(this,'${detailId}')"></td></tr>`).join('')}</tbody>
+            </table>
+          </div>
+        </td>
+      </tr>`);
+  }
+
+  rows.push(`
+    <tr style="font-weight:700;background:var(--primary-light);">
+      <td colspan="3">🇯🇵 日本小计</td><td></td>
+      <td class="num">${jp.totalTaxable.toFixed(2)}</td>
+      <td class="num">${jp.credit.toFixed(2)}</td>
+      <td class="num" style="color:var(--primary);">${jp.taxDue.toFixed(2)}</td><td></td>
+    </tr>`);
+
+  document.getElementById('tab-jp').innerHTML = `
+    <table class="summary-table">
+      <thead><tr><th style="width:36px;"></th><th>税目</th><th>笔数</th><th>原币金额</th><th class="num">折合CNY</th><th class="num">境外已缴税</th><th class="num">应缴(20%)</th><th style="width:70px;text-align:center;">核对</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+    <div class="fn"><strong>核对状态：</strong> 请点击各税目行展开明细逐项勾选确认</div>
+  `;
+}
+
 // ═══ Inline Cost Editing ═══
 function onCostEdit(input) {
   var market = input.dataset.market;
@@ -1342,23 +1506,24 @@ function onCostEdit(input) {
 }
 
 function recalcTaxAfterEdit(T, market, cat) {
-  cat.net = cat.detail.reduce(function(s,d){return s+d.gain;},0);
+  cat.net = cat.detail.reduce(function(s,d){return s+d.gainCNY;},0);
   cat.taxable = Math.max(0, cat.net);
   cat.taxDue = cat.taxable * 0.2;
 
   var m = T[market];
-  m.totalTaxable = (m.cap.taxable||0) + (m.div&&m.div.gross||0) + (m.fundCap&&m.fundCap.taxable||0) + (m.fundDiv&&m.fundDiv.gross||0) + (m.noteInc&&m.noteInc.gross||0) + (m.intInc&&m.intInc.gross||0);
-  m.totalCredit = (m.div&&m.div.tax||0) + (m.fundDiv&&m.fundDiv.tax||0);
-  m.taxDue = Math.max(0, m.totalTaxable * 0.2 - m.totalCredit);
+  m.totalTaxable = (m.div&&m.div.gross||0) + (m.int&&m.int.gross||0) + Math.max(0, (m.cap&&m.cap.net||0) + (m.fundCap&&m.fundCap.net||0)) + (m.fundDiv&&m.fundDiv.gross||0) + (m.note&&m.note.gross||0);
+  m.credit = (m.div&&m.div.tax||0);
+  m.totalCredit = m.credit;
+  m.taxDue = Math.max(0, m.totalTaxable * 0.2 - m.credit);
 
-  T.totalTaxable = T.us.totalTaxable + T.hk.totalTaxable;
-  T.totalCredit = T.us.totalCredit + T.hk.totalCredit;
-  T.totalTax = T.us.taxDue + T.hk.taxDue;
+  T.totalTaxable = MARKET_ORDER.reduce(function(s,k){ return s + (T[k] ? T[k].totalTaxable : 0); }, 0);
+  T.totalCredit = MARKET_ORDER.reduce(function(s,k){ return s + (T[k] ? T[k].credit : 0); }, 0);
+  T.totalTax = MARKET_ORDER.reduce(function(s,k){ return s + (T[k] ? T[k].taxDue : 0); }, 0);
 
   var sr = document.getElementById('stat-row');
-  if (sr) sr.innerHTML = '<div class="stat-card"><div class="sv pos">'+T.totalTax.toFixed(0)+'</div><div class="sl2">应缴个税 (CNY)</div></div><div class="stat-card"><div class="sv">'+T.totalTaxable.toFixed(0)+'</div><div class="sl2">应税所得 (CNY)</div></div><div class="stat-card"><div class="sv">'+T.totalCredit.toFixed(0)+'</div><div class="sl2">境外抵免 (CNY)</div></div><div class="stat-card"><div class="sv">'+(T.totalTaxable>0?(T.totalTax/T.totalTaxable*100).toFixed(1):'0.0')+'%</div><div class="sl2">实际税负率</div></div>';
+  if (sr) sr.innerHTML = '<div class="stat stat-pri"><div class="value">¥'+T.totalTax.toFixed(0)+'</div><div class="label">应缴税额</div><div class="sub">'+S.activeYear+'年度</div></div><div class="stat stat-war"><div class="value">¥'+T.totalTaxable.toFixed(0)+'</div><div class="label">应税所得</div><div class="sub">美国 + 香港 + 日本</div></div><div class="stat stat-suc"><div class="value">¥'+T.totalCredit.toFixed(0)+'</div><div class="label">已缴税抵扣</div><div class="sub">源泉税</div></div><div class="stat"><div class="value" style="color:var(--gray-500);">'+(T.totalTaxable>0?(T.totalTax/T.totalTaxable*100).toFixed(1):'0.0')+'%</div><div class="label">实际税负率</div><div class="sub">成本编辑后</div></div>';
 
-  var tab = document.getElementById(market==='us'?'tab-us':'tab-hk');
+  var tab = document.getElementById('tab-' + market);
   if (!tab) return;
   var prefix = S.activeYear + '-';
   var detailId = prefix + market + '-cap';
@@ -1406,26 +1571,20 @@ function recalcTaxAfterEdit(T, market, cat) {
 function renderRateTab() {
   const currentYear = parseInt(S.activeYear);
   const years = [2022, 2023, 2024, 2025];
-  let usdHtml = '', hkdHtml = '';
-
-  for (const yr of years) {
-    const u = RATES.USD[yr]; const h = RATES.HKD[yr];
-    const isActiveYear = (currentYear === yr);
-    const rowClass = isActiveYear ? 'rate-hl' : '';
-
-    usdHtml += `<tr class="${rowClass}"><td colspan="4" style="font-weight:700;background:${isActiveYear?'#fef3c7':'var(--gray-100)'};">${yr}年 ${isActiveYear ? '👈 当前年度' : ''}</td></tr>`;
-    for (let m = 1; m <= 12; m++) {
-      usdHtml += `<tr class="${rowClass}"><td>${m}月</td><td>${u[m].toFixed(4)}</td>`;
-      m++;
-      usdHtml += `<td>${m}月</td><td>${u[m].toFixed(4)}</td></tr>`;
+  function rateTable(ccy) {
+    let html = '';
+    for (const yr of years) {
+      const rates = RATES[ccy][yr];
+      const isActiveYear = (currentYear === yr);
+      const rowClass = isActiveYear ? 'rate-hl' : '';
+      html += `<tr class="${rowClass}"><td colspan="4" style="font-weight:700;background:${isActiveYear?'#fef3c7':'var(--gray-100)'};">${yr}年 ${isActiveYear ? '👈 当前年度' : ''}</td></tr>`;
+      for (let m = 1; m <= 12; m++) {
+        html += `<tr class="${rowClass}"><td>${m}月</td><td>${rates[m].toFixed(ccy === 'USD' ? 4 : 5)}</td>`;
+        m++;
+        html += `<td>${m}月</td><td>${rates[m].toFixed(ccy === 'USD' ? 4 : 5)}</td></tr>`;
+      }
     }
-
-    hkdHtml += `<tr class="${rowClass}"><td colspan="4" style="font-weight:700;background:${isActiveYear?'#fef3c7':'var(--gray-100)'};">${yr}年 ${isActiveYear ? '👈 当前年度' : ''}</td></tr>`;
-    for (let m = 1; m <= 12; m++) {
-      hkdHtml += `<tr class="${rowClass}"><td>${m}月</td><td>${h[m].toFixed(5)}</td>`;
-      m++;
-      hkdHtml += `<td>${m}月</td><td>${h[m].toFixed(5)}</td></tr>`;
-    }
+    return html;
   }
 
   const yearInfo = currentYear
@@ -1436,11 +1595,15 @@ function renderRateTab() {
     <div style="display:flex;gap:24px;flex-wrap:wrap;">
       <div style="flex:1;min-width:280px;">
         <h3 style="font-size:0.95rem;margin-bottom:8px;">USD/CNY 月末汇率</h3>
-        <table class="summary-table"><thead><tr><th>月份</th><th>汇率</th><th>月份</th><th>汇率</th></tr></thead><tbody>${usdHtml}</tbody></table>
+        <table class="summary-table"><thead><tr><th>月份</th><th>汇率</th><th>月份</th><th>汇率</th></tr></thead><tbody>${rateTable('USD')}</tbody></table>
       </div>
       <div style="flex:1;min-width:280px;">
         <h3 style="font-size:0.95rem;margin-bottom:8px;">HKD/CNY 月末汇率</h3>
-        <table class="summary-table"><thead><tr><th>月份</th><th>汇率</th><th>月份</th><th>汇率</th></tr></thead><tbody>${hkdHtml}</tbody></table>
+        <table class="summary-table"><thead><tr><th>月份</th><th>汇率</th><th>月份</th><th>汇率</th></tr></thead><tbody>${rateTable('HKD')}</tbody></table>
+      </div>
+      <div style="flex:1;min-width:280px;">
+        <h3 style="font-size:0.95rem;margin-bottom:8px;">JPY/CNY 月末汇率</h3>
+        <table class="summary-table"><thead><tr><th>月份</th><th>汇率</th><th>月份</th><th>汇率</th></tr></thead><tbody>${rateTable('JPY')}</tbody></table>
       </div>
     </div>
     <div class="alert alert-tip" style="margin-top:12px;">💱 央行月末中间价（2022-2025内置）。系统自动按交易日所在月末匹配汇率折算。FIFO成本使用全部历史数据（含往年买入）。</div>
@@ -1609,6 +1772,7 @@ function doReset() {
   updateSteps(1);
   document.getElementById('tab-us').innerHTML = '';
   document.getElementById('tab-hk').innerHTML = '';
+  document.getElementById('tab-jp').innerHTML = '';
   document.getElementById('tab-rate').innerHTML = '';
   document.getElementById('btnExport').textContent = '📥 下载年度报税底稿 (.md)';
 }
@@ -1621,6 +1785,24 @@ document.getElementById('btnReset2').addEventListener('click', doReset);
 // ============================================================
 
 function buildMarkdown(T, yearLabel) {
+  const sections = MARKET_ORDER.map(key => {
+    const cfg = MARKETS[key];
+    const m = T[key];
+    const rows = [
+      `| 股息红利 | ${m.div.gross.toFixed(2)} | ${m.div.tax.toFixed(2)} | ${m.div.netTax.toFixed(2)} |`,
+      `| 利息所得 | ${m.int.gross.toFixed(2)} | 0 | ${m.int.taxDue.toFixed(2)} |`,
+      `| 财产转让(股票) | ${m.cap.net.toFixed(2)} | 0 | ${m.cap.taxDue.toFixed(2)} |`,
+    ];
+    if (m.fundCap.detail.length > 0) rows.push(`| 财产转让(基金) | ${m.fundCap.net.toFixed(2)} | 0 | ${m.fundCap.taxDue.toFixed(2)} |`);
+    if (m.fundDiv.detail.length > 0) rows.push(`| 基金分红 | ${m.fundDiv.gross.toFixed(2)} | 0 | ${m.fundDiv.taxDue.toFixed(2)} |`);
+    if (m.note.detail.length > 0) rows.push(`| 结构化票据 | ${m.note.gross.toFixed(2)} | 0 | ${m.note.taxDue.toFixed(2)} |`);
+    rows.push(`| **小计** | **${m.totalTaxable.toFixed(2)}** | **${m.credit.toFixed(2)}** | **${m.taxDue.toFixed(2)}** |`);
+    return `### ${cfg.flag} ${cfg.label}
+| 税目 | 应税所得 | 境外已缴税 | 应缴税 |
+|------|---------|----------|-------|
+${rows.join('\n')}`;
+  }).join('\n\n');
+
   return `# ${yearLabel}境外所得个税申报底稿
 
 > 生成时间: ${new Date().toISOString().substring(0,10)}
@@ -1636,24 +1818,7 @@ function buildMarkdown(T, yearLabel) {
 
 ## 分国明细
 
-### 🇺🇸 美国
-| 税目 | 应税所得 | 境外已缴税 | 应缴税 |
-|------|---------|----------|-------|
-| 股息红利 | ${T.us.div.gross.toFixed(2)} | ${T.us.div.tax.toFixed(2)} | ${T.us.div.netTax.toFixed(2)} |
-| 利息所得 | ${T.us.int.gross.toFixed(2)} | 0 | ${T.us.int.taxDue.toFixed(2)} |
-| 财产转让 | ${T.us.cap.net.toFixed(2)} | 0 | ${T.us.cap.taxDue.toFixed(2)} |
-| **小计** | **${T.us.totalTaxable.toFixed(2)}** | **${T.us.credit.toFixed(2)}** | **${T.us.taxDue.toFixed(2)}** |
-
-### 🇭🇰 中国香港
-| 税目 | 应税所得 | 境外已缴税 | 应缴税 |
-|------|---------|----------|-------|
-| 财产转让(股票) | ${T.hk.cap.net.toFixed(2)} | 0 | ${T.hk.cap.taxDue.toFixed(2)} |
-| 财产转让(基金) | ${T.hk.fundCap.net.toFixed(2)} | 0 | ${T.hk.fundCap.taxDue.toFixed(2)} |
-| 股息红利 | ${T.hk.div.gross.toFixed(2)} | ${T.hk.div.tax.toFixed(2)} | ${T.hk.div.netTax.toFixed(2)} |
-| 基金分红 | ${T.hk.fundDiv.gross.toFixed(2)} | 0 | ${T.hk.fundDiv.taxDue.toFixed(2)} |
-| 结构化票据 | ${T.hk.note.gross.toFixed(2)} | 0 | ${T.hk.note.taxDue.toFixed(2)} |
-| 利息所得 | ${T.hk.int.gross.toFixed(2)} | 0 | ${T.hk.int.taxDue.toFixed(2)} |
-| **小计** | **${T.hk.totalTaxable.toFixed(2)}** | **${T.hk.credit.toFixed(2)}** | **${T.hk.taxDue.toFixed(2)}** |
+${sections}
 
 ---
 > 本底稿由富途境外投资个税计算器自动生成。
